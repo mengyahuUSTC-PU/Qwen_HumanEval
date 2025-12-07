@@ -51,7 +51,7 @@ def indent_body(text: str) -> str:
         if line.strip() == "":
             body_lines.append("")
         else:
-            body_lines.append("    " + line.lstrip())
+            body_lines.append("    " + line.rstrip())
     return "\n".join(body_lines)
 
 
