@@ -40,16 +40,16 @@ def request_completions(
     top_k: Optional[int],
     presence_penalty: Optional[float],
     chat_template_kwargs: Optional[Dict[str, Any]],
+    use_chat: bool,
+    instruction_template: str,
     stop: List[str],
     request_timeout: float,
 ) -> List[str]:
     payload: Dict[str, Any] = {
         "model": model,
-        "prompt": prompt,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "top_p": top_p,
-        "stop": stop,
         "n": samples_per_task,
     }
 
@@ -62,14 +62,33 @@ def request_completions(
     if chat_template_kwargs:
         payload["chat_template_kwargs"] = chat_template_kwargs
 
+    endpoint = "completions"
+    if use_chat:
+        formatted_prompt = instruction_template.format(prompt=prompt)
+        payload["messages"] = [{"role": "user", "content": formatted_prompt}]
+        endpoint = "chat/completions"
+    else:
+        payload["prompt"] = prompt
+        if stop:
+            payload["stop"] = stop
+
     resp = requests.post(
-        f"{base_url}/completions",
+        f"{base_url}/{endpoint}",
         json=payload,
         timeout=request_timeout,
     )
     resp.raise_for_status()
     data = resp.json()
-    return [choice.get("text", "") for choice in data.get("choices", [])]
+
+    completions: List[str] = []
+    for choice in data.get("choices", []):
+        if use_chat:
+            message = choice.get("message") or {}
+            completions.append(message.get("content", ""))
+        else:
+            completions.append(choice.get("text", ""))
+
+    return completions
 
 
 def run_inference(args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -98,6 +117,8 @@ def run_inference(args: argparse.Namespace) -> list[dict[str, Any]]:
                     top_k=args.top_k,
                     presence_penalty=args.presence_penalty,
                     chat_template_kwargs=args.chat_template_kwargs,
+                    use_chat=args.use_chat,
+                    instruction_template=args.instruction_template,
                     stop=args.stop,
                     request_timeout=args.request_timeout,
                 )
@@ -207,6 +228,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=float,
         default=None,
         help="Presence penalty to encourage novel tokens",
+    )
+    parser.add_argument(
+        "--use-chat",
+        action="store_true",
+        help="Use chat completions endpoint instead of plain completions",
+    )
+    parser.add_argument(
+        "--instruction-template",
+        default=(
+            "You are an intelligent programming assistant to produce Python "
+            "algorithmic solutions.\nCan you complete the following Python "
+            "function?\n```python\n{prompt}\n```"
+        ),
+        help="Template applied when --use-chat is set (must include {prompt})",
     )
     parser.add_argument(
         "--stop",
