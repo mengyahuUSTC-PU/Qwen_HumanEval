@@ -7,10 +7,13 @@ import json
 import re
 import textwrap
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional, Tuple
 
 
 CODE_FENCE_PATTERN = re.compile(r"```(?:python)?\s*(.*?)```", re.DOTALL)
+THINK_BLOCK_PATTERN = re.compile(
+    r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE
+)
 
 SKIP_COMMENT_KEYWORDS = (
     "test",
@@ -57,6 +60,23 @@ def extract_code(raw: str) -> tuple[str, bool]:
     if "```" in raw:
         return raw.replace("```python", "").replace("```", ""), True
     return raw, False
+
+
+def strip_thinking_blocks(raw: str) -> Tuple[str, Optional[str]]:
+    """Remove <think> blocks and return cleaned text and captured reasoning."""
+
+    if "<think>" not in raw.lower():
+        return raw, None
+
+    thoughts: list[str] = []
+
+    def _collect(match: re.Match[str]) -> str:
+        thoughts.append(match.group(1).strip())
+        return ""
+
+    cleaned = THINK_BLOCK_PATTERN.sub(_collect, raw)
+    reasoning = "\n\n".join(filter(None, thoughts)) or None
+    return cleaned.strip(), reasoning
 
 
 def strip_imports_and_signature(text: str) -> str:
@@ -207,6 +227,11 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Path to write the post-processed JSONL",
     )
+    parser.add_argument(
+        "--strip-thinking",
+        action="store_true",
+        help="Remove <think> blocks and store them under a 'thinking' key",
+    )
     return parser.parse_args()
 
 
@@ -220,7 +245,12 @@ def main() -> int:
 
     processed_rows = []
     for row in iter_jsonl(input_path):
-        row["completion"] = postprocess_completion(row.get("completion", ""))
+        raw_completion = row.get("completion", "")
+        if args.strip_thinking:
+            raw_completion, reasoning = strip_thinking_blocks(raw_completion)
+            if reasoning:
+                row["thinking"] = reasoning
+        row["completion"] = postprocess_completion(raw_completion)
         processed_rows.append(row)
 
     write_jsonl(output_path, processed_rows)
