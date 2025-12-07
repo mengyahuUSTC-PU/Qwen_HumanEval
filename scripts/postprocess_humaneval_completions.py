@@ -12,15 +12,51 @@ from typing import Iterable
 
 CODE_FENCE_PATTERN = re.compile(r"```(?:python)?\s*(.*?)```", re.DOTALL)
 
+SKIP_COMMENT_KEYWORDS = (
+    "test",
+    "example",
+    "expected",
+    "usage",
+    "assert",
+    "should",
+    ">>>",
+)
 
-def extract_code(raw: str) -> str:
-    """Return the first fenced code block if present, else the raw text."""
-    match = CODE_FENCE_PATTERN.findall(raw)
-    if match:
-        return match[0]
+SKIP_MARKUP_PREFIXES = (
+    "```",
+    "</",
+    "<code",
+    "<pre",
+    "<div",
+    "**",
+    "final answer",
+    "solution:",
+)
+
+SKIP_LINE_PREFIXES = (
+    "assert",
+    "print(",
+    "print ",
+    "raise AssertionError",
+)
+
+SKIP_LINE_CONTAINS = (
+    "assert(",
+    "print(",
+    "input(",
+    "sys.exit",
+    "pdb.set_trace",
+)
+
+
+def extract_code(raw: str) -> tuple[str, bool]:
+    """Return code content and whether it originated from a fenced block."""
+    matches = CODE_FENCE_PATTERN.findall(raw)
+    if matches:
+        return matches[0], True
     if "```" in raw:
-        return raw.replace("```python", "").replace("```", "")
-    return raw
+        return raw.replace("```python", "").replace("```", ""), True
+    return raw, False
 
 
 def strip_imports_and_signature(text: str) -> str:
@@ -46,6 +82,7 @@ def indent_body(text: str) -> str:
     dedented = textwrap.dedent(text).strip("\n")
     if not dedented:
         return ""
+
     body_lines = []
     for line in dedented.splitlines():
         if line.strip() == "":
@@ -55,14 +92,93 @@ def indent_body(text: str) -> str:
     return "\n".join(body_lines)
 
 
+def normalize_body(text: str) -> str:
+    dedented = textwrap.dedent(text).strip("\n")
+    if not dedented:
+        return ""
+
+    lines = dedented.splitlines()
+
+    base_indent: int | None = None
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent > 0:
+            base_indent = (
+                indent if base_indent is None else min(base_indent, indent)
+            )
+    if base_indent is None:
+        base_indent = 0
+
+    body_lines: list[str] = []
+    kept_any = False
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped:
+            if body_lines and body_lines[-1] == "":
+                continue
+            body_lines.append("")
+            continue
+
+        indent = len(raw_line) - len(raw_line.lstrip())
+        lower = stripped.lower()
+
+        if indent < base_indent:
+            if kept_any:
+                continue
+            looks_like_code = stripped.startswith(
+                (
+                    "return",
+                    "if ",
+                    "elif ",
+                    "else:",
+                    "for ",
+                    "while ",
+                    "with ",
+                    "try:",
+                    "except ",
+                    "pass",
+                    "raise ",
+                    "@",
+                )
+            ) or any(token in stripped for token in (":", "=", "("))
+            if not looks_like_code:
+                continue
+        if any(lower.startswith(prefix) for prefix in SKIP_MARKUP_PREFIXES):
+            continue
+        if any(stripped.startswith(prefix) for prefix in SKIP_LINE_PREFIXES):
+            continue
+        if any(token in stripped for token in SKIP_LINE_CONTAINS):
+            continue
+        if stripped.startswith("#") and any(
+            keyword in lower for keyword in SKIP_COMMENT_KEYWORDS
+        ):
+            continue
+        if lower.startswith("from ") or lower.startswith("import "):
+            continue
+
+        relative_indent = max(0, indent - base_indent)
+        normalized = "    " + (" " * relative_indent) + stripped.rstrip()
+        body_lines.append(normalized)
+        kept_any = True
+
+    while body_lines and body_lines[-1] == "":
+        body_lines.pop()
+
+    return "\n".join(body_lines)
+
+
 def postprocess_completion(raw: str) -> str:
     text = raw.strip()
     if not text:
         return text
-    text = extract_code(text)
+    text, from_fence = extract_code(text)
     text = strip_imports_and_signature(text)
-    text = indent_body(text)
-    return text
+    if from_fence:
+        return indent_body(text)
+    return normalize_body(text)
 
 
 def iter_jsonl(path: Path) -> Iterable[dict]:
