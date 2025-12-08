@@ -14,6 +14,17 @@ CODE_FENCE_PATTERN = re.compile(r"```(?:python)?\s*(.*?)```", re.DOTALL)
 THINK_BLOCK_PATTERN = re.compile(
     r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE
 )
+FINAL_SECTION_PATTERN = re.compile(
+    r"Final:\s*\[<(.*?)>]", re.DOTALL | re.IGNORECASE
+)
+BRACKET_SECTION_PATTERN = re.compile(
+    r"(?:Draft|Answer|Solution|Final):\s*\[<(.*?)>]",
+    re.DOTALL | re.IGNORECASE,
+)
+FINAL_FENCE_PATTERN = re.compile(
+    r"Final:\s*```(?:python)?\s*(.*?)```",
+    re.DOTALL | re.IGNORECASE,
+)
 
 SKIP_COMMENT_KEYWORDS = (
     "test",
@@ -77,6 +88,24 @@ def strip_thinking_blocks(raw: str) -> Tuple[str, Optional[str]]:
     cleaned = THINK_BLOCK_PATTERN.sub(_collect, raw)
     reasoning = "\n\n".join(filter(None, thoughts)) or None
     return cleaned.strip(), reasoning
+
+
+def extract_final_code(raw: str) -> tuple[str, bool]:
+    """Extract code from [<...>] blocks, preferring a 'Final:' section."""
+
+    match = FINAL_SECTION_PATTERN.search(raw)
+    if match:
+        return match.group(1).strip(), True
+
+    fence_match = FINAL_FENCE_PATTERN.search(raw)
+    if fence_match:
+        return fence_match.group(1).strip(), True
+
+    matches = BRACKET_SECTION_PATTERN.findall(raw)
+    if matches:
+        return matches[-1].strip(), True
+
+    return raw, False
 
 
 def strip_imports_and_signature(text: str) -> str:
@@ -194,6 +223,7 @@ def postprocess_completion(raw: str) -> str:
     text = raw.strip()
     if not text:
         return text
+    text, _ = extract_final_code(text)
     text, from_fence = extract_code(text)
     text = strip_imports_and_signature(text)
     if from_fence:

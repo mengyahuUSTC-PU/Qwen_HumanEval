@@ -13,6 +13,14 @@ from typing import Any, Dict, Iterable, List, Optional
 import requests
 from datasets import load_dataset
 
+
+class _SafeFormatDict(dict):
+    """Return placeholder text if a template key is missing."""
+
+    def __missing__(self, key: str) -> str:  # pragma: no cover - defensive
+        return "{" + key + "}"
+
+
 DEFAULT_MODEL = "qwen3-0.6b"
 DEFAULT_BASE_URL = "http://127.0.0.1:8000/v1"
 
@@ -42,6 +50,7 @@ def request_completions(
     chat_template_kwargs: Optional[Dict[str, Any]],
     use_chat: bool,
     instruction_template: str,
+    system_message: Optional[str],
     stop: List[str],
     request_timeout: float,
 ) -> List[str]:
@@ -64,8 +73,14 @@ def request_completions(
 
     endpoint = "completions"
     if use_chat:
-        formatted_prompt = instruction_template.format(prompt=prompt)
-        payload["messages"] = [{"role": "user", "content": formatted_prompt}]
+        formatted_prompt = instruction_template.format_map(
+            _SafeFormatDict(prompt=prompt)
+        )
+        messages: List[Dict[str, str]] = []
+        if system_message:
+            messages.append({"role": "system", "content": system_message})
+        messages.append({"role": "user", "content": formatted_prompt})
+        payload["messages"] = messages
         endpoint = "chat/completions"
     else:
         payload["prompt"] = prompt
@@ -77,7 +92,12 @@ def request_completions(
         json=payload,
         timeout=request_timeout,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        detail = resp.text.strip()
+        raise requests.HTTPError(
+            f"{resp.status_code} response from {endpoint}: {detail}",
+            response=resp,
+        )
     data = resp.json()
 
     completions: List[str] = []
@@ -119,6 +139,7 @@ def run_inference(args: argparse.Namespace) -> list[dict[str, Any]]:
                     chat_template_kwargs=args.chat_template_kwargs,
                     use_chat=args.use_chat,
                     instruction_template=args.instruction_template,
+                    system_message=args.system_message,
                     stop=args.stop,
                     request_timeout=args.request_timeout,
                 )
@@ -237,16 +258,33 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--instruction-template",
         default=(
-            "You are an intelligent programming assistant to produce Python "
-            "algorithmic solutions.\nCan you complete the following Python "
-            "function?\n```python\n{prompt}\n```"
+            "You are a precise Python coding assistant.\n\n"
+            "Follow this workflow strictly:\n"
+            "1. Output `Reasoning:` followed by a short paragraph that "
+            "explains your plan for this task, mentally runs through at least "
+            "two illustrative inputs (including ones hinted in the prompt), "
+            "and double-checks that loops or accumulators update the correct "
+            "variables before any comparisons.\n"
+            "2. If that mental simulation exposes a bug, describe the fix in "
+            "the same paragraph before moving on.\n"
+            "3. On the next lines write `Answer:`, then the final Python "
+            "code.\n"
+            "Starter code:\n```python\n{prompt}\n```"
         ),
         help="Template applied when --use-chat is set (must include {prompt})",
     )
     parser.add_argument(
+        "--system-message",
+        default=(
+            "You are a meticulous Python coding assistant."
+            " Follow the user's instructions precisely."
+        ),
+        help="Optional system message sent ahead of the user prompt",
+    )
+    parser.add_argument(
         "--stop",
         nargs="*",
-        default=["\nclass", "\ndef", "\nif __name__"],
+        default=[],
         help="Stop sequences for generation",
     )
     parser.add_argument(
@@ -299,6 +337,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             )
     else:
         args.chat_template_kwargs = {}
+
+    if not args.system_message:
+        args.system_message = None
 
     return args
 
