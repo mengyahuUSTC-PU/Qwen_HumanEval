@@ -42,6 +42,7 @@ def request_completions(
     model: str,
     prompt: str,
     samples_per_task: int,
+    best_of: Optional[int],
     max_tokens: int,
     temperature: float,
     top_p: float,
@@ -61,6 +62,9 @@ def request_completions(
         "top_p": top_p,
         "n": samples_per_task,
     }
+
+    if best_of is not None:
+        payload["best_of"] = best_of
 
     if top_k is not None and top_k > 0:
         payload["top_k"] = top_k
@@ -131,6 +135,7 @@ def run_inference(args: argparse.Namespace) -> list[dict[str, Any]]:
                     model=args.model,
                     prompt=prompt,
                     samples_per_task=args.samples_per_task,
+                    best_of=args.best_of,
                     max_tokens=args.max_tokens,
                     temperature=args.temperature,
                     top_p=args.top_p,
@@ -221,6 +226,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Number of completions to request per task",
     )
     parser.add_argument(
+        "--best-of",
+        type=int,
+        default=None,
+        help=(
+            "Generate this many candidates server-side and return the top "
+            "n by logprob (ignored when unset)"
+        ),
+    )
+    parser.add_argument(
         "--max-tokens",
         type=int,
         default=512,
@@ -258,12 +272,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--instruction-template",
         default=(
-            "You are a Python expert. Output only valid Python code. "
-            "Do not modify the function signature. "
-            "No explanations or Markdown. "
-            "Handle common edge cases (empty input, "
-            "single element, negatives, large values) "
-            "\nCan you complete the following Python "
+            "You are an intelligent programming assistant to produce Python "
+            "algorithmic solutions.\nCan you complete the following Python "
             "function?\n```python\n{prompt}\n```"
         ),
         help="Template applied when --use-chat is set (must include {prompt})",
@@ -320,6 +330,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     if args.top_k is not None and args.top_k <= 0:
         args.top_k = None
+
+    if args.best_of is not None and args.best_of <= 0:
+        args.best_of = None
+
+    if args.best_of is not None and args.samples_per_task > args.best_of:
+        parser.error("best-of must be >= samples-per-task")
 
     if args.chat_template_kwargs:
         try:
