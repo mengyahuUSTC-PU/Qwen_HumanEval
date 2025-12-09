@@ -258,18 +258,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--instruction-template",
         default=(
-            "You are a precise Python coding assistant.\n\n"
-            "Follow this workflow strictly:\n"
-            "1. Output `Reasoning:` followed by a short paragraph that "
-            "explains your plan for this task, mentally runs through at least "
-            "two illustrative inputs (including ones hinted in the prompt), "
-            "and double-checks that loops or accumulators update the correct "
-            "variables before any comparisons.\n"
-            "2. If that mental simulation exposes a bug, describe the fix in "
-            "the same paragraph before moving on.\n"
-            "3. On the next lines write `Answer:`, then the final Python "
-            "code.\n"
-            "Starter code:\n```python\n{prompt}\n```"
+            "You are a Python expert. Output only valid Python code. "
+            "Do not modify the function signature. "
+            "No explanations or Markdown. "
+            "Handle common edge cases (empty input, "
+            "single element, negatives, large values) "
+            "\nCan you complete the following Python "
+            "function?\n```python\n{prompt}\n```"
         ),
         help="Template applied when --use-chat is set (must include {prompt})",
     )
